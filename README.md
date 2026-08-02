@@ -200,3 +200,6 @@ elixir shunting_yard.exs expresiones.txt --resumen
 
 ## Video
 
+https://youtu.be/lsWYwakYTRs
+
+
