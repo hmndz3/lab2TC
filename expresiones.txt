@@ -1,5 +1,3 @@
-# Expresiones regulares del Laboratorio 3 - Problema 1.
-# Las lineas que empiezan con # se ignoran.
 (a*|b*)+
 ((ε|a)|b*)*
 (a|b)*abb(a|b)*
