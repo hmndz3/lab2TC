@@ -1,285 +1,146 @@
-defmodule Lexer do
-  @operadores ["|", "*", "+", "?", "^"]
-
-  def tokenizar(expresion) do
-    expresion |> String.graphemes() |> escanear([])
-  end
-
-  defp escanear([], acc), do: Enum.reverse(acc)
-
-  defp escanear(["\\", c | resto], acc), do: escanear(resto, [{:lit, "\\" <> c} | acc])
-
-  defp escanear(["[" | resto], acc) do
-    {clase, siguiente} = leer_clase(resto, "[")
-    escanear(siguiente, [{:lit, clase} | acc])
-  end
-
-  defp escanear(["(" | resto], acc), do: escanear(resto, [{:abre, "("} | acc])
-  defp escanear([")" | resto], acc), do: escanear(resto, [{:cierra, ")"} | acc])
-  defp escanear([" " | resto], acc), do: escanear(resto, acc)
-
-  defp escanear([c | resto], acc) do
-    tipo = if c in @operadores, do: :op, else: :lit
-    escanear(resto, [{tipo, c} | acc])
-  end
-
-  defp leer_clase([], acc), do: {acc, []}
-  defp leer_clase(["\\", c | resto], acc), do: leer_clase(resto, acc <> "\\" <> c)
-  defp leer_clase(["]" | resto], acc), do: {acc <> "]", resto}
-  defp leer_clase([c | resto], acc), do: leer_clase(resto, acc <> c)
-end
-
-defmodule Extensiones do
-  @epsilon {:lit, "ε"}
-  @abre {:abre, "("}
-  @cierra {:cierra, ")"}
-
-  def expandir(tokens), do: recorrer(tokens, [[]])
-
-  defp recorrer([], [nivel]), do: aplanar(nivel)
-
-  defp recorrer([{:abre, _} | resto], niveles), do: recorrer(resto, [[] | niveles])
-
-  defp recorrer([{:cierra, _} | resto], [nivel, padre | otros]) do
-    grupo = nivel |> aplanar() |> agrupar()
-    recorrer(resto, [[grupo | padre] | otros])
-  end
-
-  defp recorrer([{:op, "*"} | resto], [[ultimo | previos] | otros]) do
-    recorrer(resto, [[ultimo ++ [{:op, "*"}] | previos] | otros])
-  end
-
-  defp recorrer([{:op, "+"} | resto], [[ultimo | previos] | otros]) do
-    copia = envolver(ultimo)
-    recorrer(resto, [[copia ++ copia ++ [{:op, "*"}] | previos] | otros])
-  end
-
-  defp recorrer([{:op, "?"} | resto], [[ultimo | previos] | otros]) do
-    opcional = [@abre] ++ ultimo ++ [{:op, "|"}, @epsilon, @cierra]
-    recorrer(resto, [[opcional | previos] | otros])
-  end
-
-  defp recorrer([token | resto], [nivel | otros]) do
-    recorrer(resto, [[[token] | nivel] | otros])
-  end
-
-  defp aplanar(nivel), do: nivel |> Enum.reverse() |> Enum.concat()
-
-  defp agrupar(contenido) do
-    if grupo_completo?(contenido), do: contenido, else: [@abre] ++ contenido ++ [@cierra]
-  end
-
-  defp envolver([token]), do: [token]
-  defp envolver(atomo), do: agrupar(atomo)
-
-  defp grupo_completo?([{:abre, _} | resto]) do
-    case Enum.split(resto, -1) do
-      {medio, [{:cierra, _}]} -> balanceado?(medio, 0)
-      _ -> false
-    end
-  end
-
-  defp grupo_completo?(_), do: false
-
-  defp balanceado?([], nivel), do: nivel == 0
-  defp balanceado?([{:abre, _} | resto], nivel), do: balanceado?(resto, nivel + 1)
-  defp balanceado?([{:cierra, _} | _], 0), do: false
-  defp balanceado?([{:cierra, _} | resto], nivel), do: balanceado?(resto, nivel - 1)
-  defp balanceado?([_ | resto], nivel), do: balanceado?(resto, nivel)
-end
-
+# En regex la concatenación es invisible ("abb" es "a·b·b"), pero Shunting Yard
+# necesita verla. Aquí se escribe ese · de forma explícita.
 defmodule Concatenacion do
-  @concat {:op, "·"}
+  # el operador que se va a insertar
+  @punto {:operador, "·"}
 
+  # ---------------------------------------------------------------------------(mete el operador · donde la concatenación estaba implícita)
   def insertar(tokens), do: recorrer(tokens, [])
 
-  defp recorrer([], acc), do: Enum.reverse(acc)
-  defp recorrer([token], acc), do: Enum.reverse([token | acc])
+  # ---------------------------------------------------------------------------(revisa los tokens de dos en dos)
+  # ya no quedan tokens: se devuelve el resultado en el orden correcto
+  defp recorrer([], resultado), do: Enum.reverse(resultado)
 
-  defp recorrer([a, b | resto], acc) do
-    nuevo = if cierra?(a) and abre?(b), do: [@concat, a | acc], else: [a | acc]
-    recorrer([b | resto], nuevo)
+  # queda uno solo: no tiene vecino a la derecha, así que se copia tal cual
+  defp recorrer([token], resultado), do: Enum.reverse([token | resultado])
+
+  defp recorrer([actual, siguiente | resto], resultado) do
+    # si el primero cierra algo y el segundo abre algo, entre ellos falta un ·
+    resultado =
+      if termina?(actual) and empieza?(siguiente) do
+        [@punto, actual | resultado]
+      else
+        [actual | resultado]
+      end
+
+    # se avanza dejando "siguiente" como el nuevo "actual"
+    recorrer([siguiente | resto], resultado)
   end
 
-  defp cierra?({:lit, _}), do: true
-  defp cierra?({:cierra, _}), do: true
-  defp cierra?({:op, op}), do: op in ["*", "+", "?"]
-  defp cierra?(_), do: false
+  # ---------------------------------------------------------------------------(dice si un token termina una subexpresión)
+  defp termina?({:simbolo, _}), do: true
+  defp termina?({:cierra, _}), do: true
+  # las cerraduras van después de su operando, así que también cierran
+  defp termina?({:operador, operador}), do: operador in ["*", "+", "?"]
+  defp termina?(_), do: false
 
-  defp abre?({:lit, _}), do: true
-  defp abre?({:abre, _}), do: true
-  defp abre?(_), do: false
+  # ---------------------------------------------------------------------------(dice si un token empieza una subexpresión)
+  defp empieza?({:simbolo, _}), do: true
+  defp empieza?({:abre, _}), do: true
+  defp empieza?(_), do: false
 end
 
+# Pasa la expresión de infix a postfix usando una salida y una pila de
+# operadores. Devuelve una lista de símbolos, no un texto.
 defmodule ShuntingYard do
-  @precedencias %{"(" => 1, "|" => 2, "·" => 3, "?" => 4, "*" => 4, "+" => 4, "^" => 5}
+  # entre más alto el número, más fuerte amarra el operador
+  @precedencias %{"·" => 2, "|" => 1}
 
+  # operadores que van después de su operando y por eso no pasan por la pila
+  @unarios ["*", "+", "?"]
+
+  # ---------------------------------------------------------------------------(convierte los tokens de infix a postfix)
   def convertir(tokens) do
-    {salida, _pila, pasos} = recorrer(tokens, [], [], [])
-    {salida |> Enum.reverse() |> Enum.join(), Enum.reverse(pasos)}
+    {salida, pasos} = recorrer(tokens, [], [], [])
+    # las dos listas se fueron llenando al revés, hay que voltearlas
+    {Enum.reverse(salida), Enum.reverse(pasos)}
   end
 
-  defp recorrer([], salida, [], pasos), do: {salida, [], pasos}
+  # ---------------------------------------------------------------------------(lee los tokens uno por uno aplicando las reglas)
+  # caso final: ya no hay tokens ni operadores pendientes
+  defp recorrer([], salida, [], pasos), do: {salida, pasos}
 
+  # ya no hay tokens pero la pila tiene operadores: se vacían a la salida
   defp recorrer([], salida, [tope | pila], pasos) do
-    nueva = [tope | salida]
-    recorrer([], nueva, pila, [paso("fin", "pop #{tope}", pila, nueva) | pasos])
+    salida = [tope | salida]
+    recorrer([], salida, pila, [paso("fin", "saca #{tope}", pila, salida) | pasos])
   end
 
-  defp recorrer([{:lit, texto} | resto], salida, pila, pasos) do
-    nueva = [texto | salida]
-    recorrer(resto, nueva, pila, [paso(texto, "operando", pila, nueva) | pasos])
+  # un símbolo nunca espera, se escribe de una vez
+  defp recorrer([{:simbolo, simbolo} | resto], salida, pila, pasos) do
+    salida = [simbolo | salida]
+    recorrer(resto, salida, pila, [paso(simbolo, "a la salida", pila, salida) | pasos])
   end
 
+  # * + ? aplican al operando que ya se escribió, así que tampoco esperan
+  defp recorrer([{:operador, operador} | resto], salida, pila, pasos)
+       when operador in @unarios do
+    salida = [operador | salida]
+    recorrer(resto, salida, pila, [paso(operador, "a la salida", pila, salida) | pasos])
+  end
+
+  # "(" solo sirve de marca, no llega nunca a la salida
   defp recorrer([{:abre, _} | resto], salida, pila, pasos) do
-    nueva = ["(" | pila]
-    recorrer(resto, salida, nueva, [paso("(", "push (", nueva, salida) | pasos])
+    pila = ["(" | pila]
+    recorrer(resto, salida, pila, [paso("(", "guarda (", pila, salida) | pasos])
   end
 
+  # ")" cierra el grupo que abrió el "(" más reciente
   defp recorrer([{:cierra, _} | resto], salida, pila, pasos) do
-    {salida, pila, pasos} = vaciar_grupo(salida, pila, pasos)
+    {salida, pila, pasos} = cerrar_grupo(salida, pila, pasos)
     recorrer(resto, salida, pila, pasos)
   end
 
-  defp recorrer([{:op, op} | resto], salida, pila, pasos) do
-    {salida, pila, pasos} = sacar_mayores(op, salida, pila, pasos)
-    nueva = [op | pila]
-    recorrer(resto, salida, nueva, [paso(op, "push #{op}", nueva, salida) | pasos])
+  # | y · sí pasan por la pila, respetando la precedencia
+  defp recorrer([{:operador, operador} | resto], salida, pila, pasos) do
+    {salida, pila, pasos} = sacar_mayores(operador, salida, pila, pasos)
+    pila = [operador | pila]
+    recorrer(resto, salida, pila, [paso(operador, "guarda #{operador}", pila, salida) | pasos])
   end
 
-  defp vaciar_grupo(salida, [], pasos), do: {salida, [], pasos}
+  # ---------------------------------------------------------------------------(vacía la pila hasta encontrar el paréntesis que abre)
+  # pila vacía: la expresión venía mal balanceada, se corta sin hacer nada
+  defp cerrar_grupo(salida, [], pasos), do: {salida, [], pasos}
 
-  defp vaciar_grupo(salida, ["(" | pila], pasos) do
-    {salida, pila, [paso(")", "pop ( y descartar", pila, salida) | pasos]}
+  # apareció el "(": se descarta porque los paréntesis no existen en postfix
+  defp cerrar_grupo(salida, ["(" | pila], pasos) do
+    {salida, pila, [paso(")", "saca ( y la tira", pila, salida) | pasos]}
   end
 
-  defp vaciar_grupo(salida, [tope | pila], pasos) do
-    nueva = [tope | salida]
-    vaciar_grupo(nueva, pila, [paso(")", "pop #{tope}", pila, nueva) | pasos])
+  # cualquier otro operador sale a la salida y se sigue buscando el "("
+  defp cerrar_grupo(salida, [tope | pila], pasos) do
+    salida = [tope | salida]
+    cerrar_grupo(salida, pila, [paso(")", "saca #{tope}", pila, salida) | pasos])
   end
 
-  defp sacar_mayores(op, salida, [tope | pila], pasos) when tope != "(" do
-    if precedencia(tope) >= precedencia(op) do
-      nueva = [tope | salida]
-      sacar_mayores(op, nueva, pila, [paso(op, "pop #{tope}", pila, nueva) | pasos])
+  # ---------------------------------------------------------------------------(saca de la pila los operadores más fuertes o iguales)
+  defp sacar_mayores(operador, salida, [tope | pila], pasos) when tope != "(" do
+    if precedencia(tope) >= precedencia(operador) do
+      # el de la pila debía evaluarse primero, entonces sale primero
+      salida = [tope | salida]
+      sacar_mayores(operador, salida, pila, [paso(operador, "saca #{tope}", pila, salida) | pasos])
     else
+      # el de la pila es más débil, se queda esperando su turno
       {salida, [tope | pila], pasos}
     end
   end
 
-  defp sacar_mayores(_op, salida, pila, pasos), do: {salida, pila, pasos}
+  # la pila está vacía o el tope es "(": aquí ya no se saca nada
+  defp sacar_mayores(_operador, salida, pila, pasos), do: {salida, pila, pasos}
 
-  defp precedencia(op), do: Map.get(@precedencias, op, 0)
+  # ---------------------------------------------------------------------------(devuelve qué tan fuerte es un operador)
+  defp precedencia(operador), do: Map.get(@precedencias, operador, 0)
 
+  # ---------------------------------------------------------------------------(guarda una fila de la tabla de pasos)
   defp paso(token, accion, pila, salida) do
-    {token, accion, formato_pila(pila), formato_salida(salida)}
+    {token, accion, texto_pila(pila), texto_salida(salida)}
   end
 
-  defp formato_pila([]), do: "-"
-  defp formato_pila(pila), do: pila |> Enum.reverse() |> Enum.join(" ")
+  # ---------------------------------------------------------------------------(escribe la pila con el fondo a la izquierda)
+  defp texto_pila([]), do: "-"
+  defp texto_pila(pila), do: pila |> Enum.reverse() |> Enum.join(" ")
 
-  defp formato_salida([]), do: "-"
-  defp formato_salida(salida), do: salida |> Enum.reverse() |> Enum.join()
+  # ---------------------------------------------------------------------------(escribe la salida parcial)
+  defp texto_salida([]), do: "-"
+  defp texto_salida(salida), do: salida |> Enum.reverse() |> Enum.join()
 end
-
-defmodule Reporte do
-  @verde "\e[92m"
-  @cian "\e[96m"
-  @gris "\e[90m"
-  @negrita "\e[1m"
-  @reset "\e[0m"
-  @ancho 78
-
-  def procesar(numero, expresion, opciones) do
-    tokens = Lexer.tokenizar(expresion)
-    expandidos = Extensiones.expandir(tokens)
-    con_concat = Concatenacion.insertar(expandidos)
-    {postfix, pasos} = ShuntingYard.convertir(con_concat)
-
-    IO.puts(@gris <> String.duplicate("=", @ancho) <> @reset)
-    IO.puts("#{@negrita}Linea #{numero}#{@reset}  #{expresion}")
-    IO.puts(@gris <> String.duplicate("-", @ancho) <> @reset)
-
-    campo("Tokens", Enum.map_join(tokens, " ", &texto/1))
-    campo("Sin + ni ?", Enum.map_join(expandidos, "", &texto/1))
-    campo("Con concat", Enum.map_join(con_concat, "", &texto/1))
-    campo("Pasos", "#{length(pasos)}")
-
-    if not Keyword.get(opciones, :resumen, false) do
-      IO.puts("")
-      tabla(pasos)
-    end
-
-    IO.puts("")
-    IO.puts("#{@verde}#{@negrita}  Postfix:#{@reset}#{@verde} #{postfix}#{@reset}\n")
-  end
-
-  def pausa do
-    IO.write("#{@gris}  -- Enter para continuar --#{@reset}")
-    IO.gets("")
-  end
-
-  def encabezado(ruta) do
-    IO.puts("\n#{@negrita}Archivo:#{@reset} #{ruta}")
-    IO.puts("#{@gris}Opciones: --pausa   --resumen   --linea N#{@reset}\n")
-  end
-
-  def no_encontrado(ruta), do: IO.puts("\e[91mNo se encontro el archivo: #{ruta}\e[0m")
-
-  defp campo(etiqueta, valor) do
-    IO.puts("  #{@cian}#{col(etiqueta <> ":", 13)}#{@reset}#{valor}")
-  end
-
-  defp texto({_tipo, valor}), do: valor
-
-  defp tabla(pasos) do
-    IO.puts(@gris <> "  #{col("Token", 8)}#{col("Accion", 20)}#{col("Pila", 20)}Salida" <> @reset)
-
-    Enum.each(pasos, fn {token, accion, pila, salida} ->
-      IO.puts("  #{col(token, 8)}#{col(accion, 20)}#{col(pila, 20)}#{salida}")
-    end)
-  end
-
-  defp col(valor, ancho), do: String.pad_trailing(valor, ancho)
-end
-
-{opciones, argumentos, _} =
-  OptionParser.parse(System.argv(),
-    strict: [pausa: :boolean, resumen: :boolean, linea: :integer]
-  )
-
-ruta = List.first(argumentos) || "expresiones.txt"
-
-case File.read(ruta) do
-  {:error, _} ->
-    Reporte.no_encontrado(ruta)
-    System.halt(1)
-
-  {:ok, contenido} ->
-    Reporte.encabezado(ruta)
-
-    expresiones =
-      contenido
-      |> String.split(~r/\r?\n/)
-      |> Enum.with_index(1)
-      |> Enum.map(fn {linea, numero} -> {String.trim(linea), numero} end)
-      |> Enum.reject(fn {expresion, _} ->
-        expresion == "" or String.starts_with?(expresion, "#")
-      end)
-
-    seleccion =
-      case opciones[:linea] do
-        nil -> expresiones
-        n -> Enum.filter(expresiones, fn {_, numero} -> numero == n end)
-      end
-
-    total = length(seleccion)
-
-    seleccion
-    |> Enum.with_index(1)
-    |> Enum.each(fn {{expresion, numero}, indice} ->
-      Reporte.procesar(numero, expresion, opciones)
-      if opciones[:pausa] && indice < total, do: Reporte.pausa()
-    end)
-end
-
