@@ -122,5 +122,5 @@ postfix simplificado   0ε|1ε|ε|·0*·
 
 ## Video
 
-<!-- Pegar aquí el enlace de YouTube (video no listado) -->
-_Pendiente: subir el video y pegar el enlace._
+https://youtu.be/S3_v5pq9UyY
+
