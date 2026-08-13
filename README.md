@@ -1,10 +1,11 @@
-# Laboratorio 3 — Teoría de la Computación
+# Laboratorio 4 — Teoría de la Computación
 
-## Problema 1: del postfix al árbol sintáctico
+## Problema 1: del árbol sintáctico al AFN con Thompson
 
-El laboratorio pasado convertía una expresión regular de infix a postfix con Shunting Yard.
-Este reutiliza ese código y sigue un paso más: con el postfix arma el **árbol sintáctico** de
-la expresión, le quita las extensiones `+` y `?`, y lo dibuja en pantalla.
+El laboratorio pasado convertía una expresión regular a postfix con Shunting Yard y con eso
+armaba el **árbol sintáctico**. Este reutiliza todo eso y sigue dos pasos más: le aplica el
+**algoritmo de Thompson** al árbol para construir un **AFN**, lo dibuja en pantalla, y después
+**simula** el autómata con una cadena `w` para decir si `w ∈ L(r)`.
 
 Hecho en Elixir. El dibujo usa `:wx`, la librería gráfica que ya viene incluida con
 Erlang/OTP, así que no hay que instalar nada aparte.
@@ -14,113 +15,158 @@ Erlang/OTP, así que no hay que instalar nada aparte.
 ## Cómo correrlo
 
 ```bash
-elixir arbol_sintactico.exs
+elixir afn_thompson.exs
 ```
 
-Procesa las cuatro expresiones de `expresiones.txt`. Por cada una imprime todo el proceso en
-la consola y abre una ventana con el árbol. Hay que cerrar la ventana para que siga con la
+Procesa las expresiones de `expresiones.txt`. Por cada una imprime todo el proceso en la
+consola y abre una ventana con el AFN. Hay que cerrar la ventana para que siga con la
 siguiente expresión.
 
 Opciones:
 
 ```
+--cadena w      prueba todas las expresiones con esa cadena
 --linea N       corre solo la expresión N
 --png           guarda las imágenes en imagenes/ en vez de abrir ventanas
 --sin-ventana   solo imprime en la consola
 ```
 
+### El archivo de entrada
+
+Cada línea trae la expresión regular y, después de un `;`, las cadenas con las que se va a
+probar, separadas por comas:
+
+```
+(a|b)*abb(a|b)* ; babbab, aabab
+```
+
+Si una línea no trae cadenas y tampoco se usó `--cadena`, el programa las pregunta. La cadena
+vacía se escribe `ε` o se deja en blanco.
+
 ---
 
 ## Qué hace con cada expresión
 
-1. Parte el texto en tokens.
-2. Escribe la concatenación, que en regex es invisible (`abb` es en realidad `a·b·b`).
-3. Convierte a postfix con Shunting Yard, mostrando la tabla paso por paso.
-4. Arma el árbol leyendo el postfix de izquierda a derecha con una pila de nodos.
-5. Quita las extensiones `+` y `?`.
-6. Dibuja el árbol.
+1. Parte el texto en tokens y escribe la concatenación, que en regex es invisible (`abb` es en
+   realidad `a·b·b`).
+2. Convierte a postfix con Shunting Yard.
+3. Arma el árbol sintáctico y le quita las extensiones `+` y `?`, porque Thompson solo sabe de
+   `|`, `·` y `*`:
 
-### Los nodos
+   ```
+   X+   ->   X · X*      una vez obligatoria y después cero o más veces
+   X?   ->   X | ε       o está X, o está la cadena vacía
+   ```
 
-Cada tipo de nodo es un struct distinto — símbolo, unión, concatenación, estrella, más y
-opcional — así el tipo del objeto ya dice qué operación representa. Las hojas guardan su
-símbolo, los operadores de un operando guardan un hijo, y los de dos guardan izquierda y
-derecha. Al final cada nodo recibe un número, que es el que sale en gris en el dibujo.
+4. Aplica Thompson: cada nodo del árbol se cambia por un pedacito de autómata con **una sola
+   entrada y una sola salida**, y esos pedacitos se pegan con transiciones `ε` hasta llegar a
+   la raíz.
 
-### La simplificación de `+` y `?`
+   ```
+   símbolo a          ──>(i)──a──>(f)
 
-```
-X+   ->   X · X*      una vez obligatoria y después cero o más veces
-X?   ->   X | ε       o está X, o está la cadena vacía
-```
+   concatenación      ──>[ izquierda ]──ε──>[ derecha ]──>
 
-Se hace sobre el árbol ya construido y no sobre el texto, porque así el operando `X` ya es
-directamente el subárbol hijo y no hay que buscar dónde empieza ni dónde termina.
+                            ε──>[ izquierda ]──ε
+   unión              ──>(i)                      (f)──>
+                            ε──>[  derecha  ]──ε
 
-Para el `+` el subárbol se duplica, por eso el árbol de `(a*|b*)+` pasa de 6 nodos a 12.
+                           ┌───────── ε ─────────┐
+   estrella           ──>(i)──ε──>[ hijo ]──ε──>(f)
+                                └──── ε ────┘
+   ```
+
+   Un nodo `ε` del árbol es simplemente una transición que no consume nada, así que no necesita
+   trato especial.
+
+5. Simula el AFN con cada cadena `w` y responde **sí** o **no**.
+6. Dibuja el autómata.
+
+### La simulación
+
+No se convierte a AFD. Se lleva el **conjunto de estados** en los que el autómata podría estar
+al mismo tiempo:
+
+- se arranca con la **ε-clausura** del estado inicial, o sea todo lo que se alcanza sin
+  consumir nada;
+- por cada símbolo de `w` se ve a dónde llega ese conjunto con ese símbolo, y al resultado se
+  le vuelve a sacar la ε-clausura;
+- al terminar la cadena, si el estado de aceptación quedó dentro del conjunto, entonces
+  `w ∈ L(r)` y la respuesta es **sí**.
+
+Los ciclos del `*` no dan vueltas infinitas porque la ε-clausura no vuelve a visitar un estado
+que ya revisó.
 
 ### El dibujo
 
-Las hojas se acomodan una tras otra de izquierda a derecha y cada padre queda centrado
-encima de sus hijos. El color del círculo depende del tipo de nodo: azul los símbolos, verde
-la concatenación, naranja la unión, morado la estrella, y rojo el `+` y el `?`.
+Thompson ya sabe qué forma tiene el autómata, así que él mismo va diciendo en qué fila y
+columna va cada estado: los fragmentos de una concatenación se ponen uno detrás del otro y las
+dos ramas de una unión, una arriba y otra abajo. El dibujo solo pasa eso a pixeles.
 
-Cuando la expresión usa `+` o `?`, la ventana muestra los dos árboles: el original arriba y
-el simplificado abajo.
+- El estado inicial va en verde y con la flechita de "inicio", el de aceptación en naranja y
+  con doble círculo.
+- Las transiciones con símbolo van en azul y las `ε` en gris.
+- Las flechas que se regresan (las del `*`) se van por debajo y los saltos largos por encima,
+  para no pasarles por encima a los estados.
+- Los estados se numeran de izquierda a derecha para que el dibujo y la tabla de transiciones
+  se lean igual.
 
 ---
 
 ## Resultados
 
-**(a) `(a*|b*)+`**
+**(a) `(a*|b*)+`** — postfix `a*b*|+`, y ya sin `+`: `a*b*|a*b*|*·` → 22 estados, 33 transiciones
 
-```
-postfix                a*b*|+
-postfix simplificado   a*b*|a*b*|*·
-```
+| w          | ¿w ∈ L(r)? |
+| ---------- | ---------- |
+| `"aaabbb"` | sí         |
+| `"abab"`   | sí         |
 
-![Árbol de (a*|b*)+](imagenes/arbol_1.png)
+![AFN de (a*|b*)+](imagenes/afn_1.png)
 
-**(b) `((ε|a)|b*)*`** — no usa `+` ni `?`, el árbol ya estaba simplificado
+**(b) `((ε|a)|b*)*`** — postfix `εa|b*|*` → 14 estados, 19 transiciones
 
-```
-postfix                εa|b*|*
-```
+| w        | ¿w ∈ L(r)? |
+| -------- | ---------- |
+| `"abba"` | sí         |
+| `ε`      | sí         |
 
-![Árbol de ((ε|a)|b*)*](imagenes/arbol_2.png)
+![AFN de ((ε|a)|b*)*](imagenes/afn_2.png)
 
-**(c) `(a|b)*abb(a|b)*`** — no usa `+` ni `?`, el árbol ya estaba simplificado
+**(c) `(a|b)*abb(a|b)*`** — postfix `ab|*a·b·b·ab|*·` → 22 estados, 27 transiciones
 
-```
-postfix                ab|*a·b·b·ab|*·
-```
+| w          | ¿w ∈ L(r)? |                       |
+| ---------- | ---------- | --------------------- |
+| `"babbab"` | sí         | tiene `abb` adentro   |
+| `"aabab"`  | no         | nunca aparece `abb`   |
 
-![Árbol de (a|b)*abb(a|b)*](imagenes/arbol_3.png)
+![AFN de (a|b)*abb(a|b)*](imagenes/afn_3.png)
 
-**(d) `0?(1?)?0*`**
+**(d) `0?(1?)?0*`** — postfix `0?1??·0*·`, y ya sin `?`: `0ε|1ε|ε|·0*·` → 20 estados, 24 transiciones
 
-```
-postfix                0?1??·0*·
-postfix simplificado   0ε|1ε|ε|·0*·
-```
+| w        | ¿w ∈ L(r)? |                          |
+| -------- | ---------- | ------------------------ |
+| `"0100"` | sí         | `0`, `1` y dos ceros más |
+| `"11"`   | no         | el `1?` solo permite uno |
 
-![Árbol de 0?(1?)?0*](imagenes/arbol_4.png)
+![AFN de 0?(1?)?0*](imagenes/afn_4.png)
 
 ---
 
 ## Archivos
 
-- `arbol_sintactico.exs` — programa principal, junta todas las etapas
+- `afn_thompson.exs` — programa principal, junta todas las etapas
 - `lexer.exs` — parte el texto en tokens
 - `shunting_yard.exs` — inserta el `·` y convierte de infix a postfix
-- `arbol.exs` — los objetos de cada nodo y todo lo que se le hace al árbol
+- `arbol.exs` — los nodos del árbol y todo lo que se le hace
+- `thompson.exs` — el AFN y la construcción de Thompson
+- `simulacion.exs` — la ε-clausura y la simulación de la cadena
 - `ventana.exs` — el dibujo
-- `expresiones.txt` — las cuatro expresiones del enunciado
-- `imagenes/` — los árboles generados con `--png`
+- `expresiones.txt` — las expresiones del enunciado con sus cadenas
+- `imagenes/` — los AFN generados con `--png`
 
 ---
 
 ## Video
 
-https://youtu.be/S3_v5pq9UyY
-
+_(pendiente)_

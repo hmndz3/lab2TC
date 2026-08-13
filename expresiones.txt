@@ -1,4 +1,5 @@
-(a*|b*)+
-((ε|a)|b*)*
-(a|b)*abb(a|b)*
-0?(1?)?0*
+# expresión regular ; cadenas w con las que se va a probar (separadas por comas)
+(a*|b*)+        ; aaabbb, abab
+((ε|a)|b*)*     ; abba, ε
+(a|b)*abb(a|b)* ; babbab, aabab
+0?(1?)?0*       ; 0100, 11

@@ -51,96 +51,66 @@ defmodule ShuntingYard do
 
   # ---------------------------------------------------------------------------(convierte los tokens de infix a postfix)
   def convertir(tokens) do
-    {salida, pasos} = recorrer(tokens, [], [], [])
-    # las dos listas se fueron llenando al revés, hay que voltearlas
-    {Enum.reverse(salida), Enum.reverse(pasos)}
+    # la salida se va llenando al revés, hay que voltearla al final
+    tokens |> recorrer([], []) |> Enum.reverse()
   end
 
   # ---------------------------------------------------------------------------(lee los tokens uno por uno aplicando las reglas)
   # caso final: ya no hay tokens ni operadores pendientes
-  defp recorrer([], salida, [], pasos), do: {salida, pasos}
+  defp recorrer([], salida, []), do: salida
 
   # ya no hay tokens pero la pila tiene operadores: se vacían a la salida
-  defp recorrer([], salida, [tope | pila], pasos) do
-    salida = [tope | salida]
-    recorrer([], salida, pila, [paso("fin", "saca #{tope}", pila, salida) | pasos])
-  end
+  defp recorrer([], salida, [tope | pila]), do: recorrer([], [tope | salida], pila)
 
   # un símbolo nunca espera, se escribe de una vez
-  defp recorrer([{:simbolo, simbolo} | resto], salida, pila, pasos) do
-    salida = [simbolo | salida]
-    recorrer(resto, salida, pila, [paso(simbolo, "a la salida", pila, salida) | pasos])
+  defp recorrer([{:simbolo, simbolo} | resto], salida, pila) do
+    recorrer(resto, [simbolo | salida], pila)
   end
 
   # * + ? aplican al operando que ya se escribió, así que tampoco esperan
-  defp recorrer([{:operador, operador} | resto], salida, pila, pasos)
-       when operador in @unarios do
-    salida = [operador | salida]
-    recorrer(resto, salida, pila, [paso(operador, "a la salida", pila, salida) | pasos])
+  defp recorrer([{:operador, operador} | resto], salida, pila) when operador in @unarios do
+    recorrer(resto, [operador | salida], pila)
   end
 
   # "(" solo sirve de marca, no llega nunca a la salida
-  defp recorrer([{:abre, _} | resto], salida, pila, pasos) do
-    pila = ["(" | pila]
-    recorrer(resto, salida, pila, [paso("(", "guarda (", pila, salida) | pasos])
-  end
+  defp recorrer([{:abre, _} | resto], salida, pila), do: recorrer(resto, salida, ["(" | pila])
 
   # ")" cierra el grupo que abrió el "(" más reciente
-  defp recorrer([{:cierra, _} | resto], salida, pila, pasos) do
-    {salida, pila, pasos} = cerrar_grupo(salida, pila, pasos)
-    recorrer(resto, salida, pila, pasos)
+  defp recorrer([{:cierra, _} | resto], salida, pila) do
+    {salida, pila} = cerrar_grupo(salida, pila)
+    recorrer(resto, salida, pila)
   end
 
   # | y · sí pasan por la pila, respetando la precedencia
-  defp recorrer([{:operador, operador} | resto], salida, pila, pasos) do
-    {salida, pila, pasos} = sacar_mayores(operador, salida, pila, pasos)
-    pila = [operador | pila]
-    recorrer(resto, salida, pila, [paso(operador, "guarda #{operador}", pila, salida) | pasos])
+  defp recorrer([{:operador, operador} | resto], salida, pila) do
+    {salida, pila} = sacar_mayores(operador, salida, pila)
+    recorrer(resto, salida, [operador | pila])
   end
 
   # ---------------------------------------------------------------------------(vacía la pila hasta encontrar el paréntesis que abre)
   # pila vacía: la expresión venía mal balanceada, se corta sin hacer nada
-  defp cerrar_grupo(salida, [], pasos), do: {salida, [], pasos}
+  defp cerrar_grupo(salida, []), do: {salida, []}
 
   # apareció el "(": se descarta porque los paréntesis no existen en postfix
-  defp cerrar_grupo(salida, ["(" | pila], pasos) do
-    {salida, pila, [paso(")", "saca ( y la tira", pila, salida) | pasos]}
-  end
+  defp cerrar_grupo(salida, ["(" | pila]), do: {salida, pila}
 
   # cualquier otro operador sale a la salida y se sigue buscando el "("
-  defp cerrar_grupo(salida, [tope | pila], pasos) do
-    salida = [tope | salida]
-    cerrar_grupo(salida, pila, [paso(")", "saca #{tope}", pila, salida) | pasos])
-  end
+  defp cerrar_grupo(salida, [tope | pila]), do: cerrar_grupo([tope | salida], pila)
 
   # ---------------------------------------------------------------------------(saca de la pila los operadores más fuertes o iguales)
-  defp sacar_mayores(operador, salida, [tope | pila], pasos) when tope != "(" do
+  defp sacar_mayores(operador, salida, [tope | pila]) when tope != "(" do
     if precedencia(tope) >= precedencia(operador) do
       # el de la pila debía evaluarse primero, entonces sale primero
-      salida = [tope | salida]
-      sacar_mayores(operador, salida, pila, [paso(operador, "saca #{tope}", pila, salida) | pasos])
+      sacar_mayores(operador, [tope | salida], pila)
     else
       # el de la pila es más débil, se queda esperando su turno
-      {salida, [tope | pila], pasos}
+      {salida, [tope | pila]}
     end
   end
 
   # la pila está vacía o el tope es "(": aquí ya no se saca nada
-  defp sacar_mayores(_operador, salida, pila, pasos), do: {salida, pila, pasos}
+  defp sacar_mayores(_operador, salida, pila), do: {salida, pila}
 
   # ---------------------------------------------------------------------------(devuelve qué tan fuerte es un operador)
   defp precedencia(operador), do: Map.get(@precedencias, operador, 0)
-
-  # ---------------------------------------------------------------------------(guarda una fila de la tabla de pasos)
-  defp paso(token, accion, pila, salida) do
-    {token, accion, texto_pila(pila), texto_salida(salida)}
-  end
-
-  # ---------------------------------------------------------------------------(escribe la pila con el fondo a la izquierda)
-  defp texto_pila([]), do: "-"
-  defp texto_pila(pila), do: pila |> Enum.reverse() |> Enum.join(" ")
-
-  # ---------------------------------------------------------------------------(escribe la salida parcial)
-  defp texto_salida([]), do: "-"
-  defp texto_salida(salida), do: salida |> Enum.reverse() |> Enum.join()
 end
