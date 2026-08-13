@@ -168,5 +168,8 @@ dos ramas de una unión, una arriba y otra abajo. El dibujo solo pasa eso a pixe
 ---
 
 ## Video
+Link del video: 
+https://youtu.be/2iNNcA5XHgM
 
-_(pendiente)_
+
+
